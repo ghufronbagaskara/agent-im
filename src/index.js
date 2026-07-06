@@ -3,6 +3,7 @@ import pg from "pg";
 
 import { AGENTS_BY_ID, buildChannelMap } from "./agents.js";
 import { generateReply } from "./llm.js";
+import { initMcp, listTools } from "./mcp.js";
 import { handleNotesButton, handleNotesCommand } from "./meetingNotes.js";
 import { initOps, reportError } from "./ops.js";
 import { runAgentReply } from "./runner.js";
@@ -134,6 +135,24 @@ client.on("messageCreate", async (msg) => {
     return;
   }
 
+  if (msg.content.trim().toLowerCase().startsWith("!mcptools ")) {
+    const server = msg.content.trim().split(/\s+/)[1];
+    try {
+      const tools = await listTools(server);
+      const body = tools
+        .map(
+          (tool) =>
+            `${tool.name} - ${(tool.description || "").replace(/\s+/g, " ").slice(0, 100)}`,
+        )
+        .join("\n")
+        .slice(0, 1900);
+      await msg.reply(`\`\`\`\n${body}\n\`\`\``);
+    } catch (error) {
+      await msg.reply(`Error: ${error.message}`);
+    }
+    return;
+  }
+
   const agent = channelMap[msg.channelId];
   if (agent) {
     try {
@@ -179,9 +198,10 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-client.once("clientReady", () => {
+client.once("clientReady", async () => {
   console.log("Hermes bot online");
   initOps(client);
+  await initMcp();
   channelMap = buildChannelMap();
   agentQueue = startScheduler(client, db);
   startWebhook(client, db);
