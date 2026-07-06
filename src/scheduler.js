@@ -15,7 +15,7 @@ export function startScheduler(client, db) {
   const worker = new Worker(
     "agents",
     async (job) => {
-      await runAgent(client, db, job.data.agentId);
+      await runAgent(client, db, job.data.agentId, { queue });
     },
     { connection, concurrency: 1 },
   );
