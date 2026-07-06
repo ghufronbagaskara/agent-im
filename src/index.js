@@ -77,5 +77,5 @@ client.on("messageCreate", async (msg) => {
   }
 });
 
-client.once("clientReady", () => console.log("Hermes bot online"));
+client.once("ready", () => console.log("Hermes bot online"));
 client.login(process.env.DISCORD_TOKEN);
