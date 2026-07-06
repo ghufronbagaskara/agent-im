@@ -1,6 +1,6 @@
 services:
   hermes-postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: hermes
@@ -40,13 +40,6 @@ services:
     command: sh -c "npx -y @hubspot/mcp-server --http --port 8001"
     environment:
       PRIVATE_APP_ACCESS_TOKEN: ${HUBSPOT_TOKEN}
-    networks: [hermes-net]
-
-  zep:
-    profiles: ["mcp"]
-    image: ghcr.io/getzep/zep:latest
-    restart: unless-stopped
-    env_file: .env
     networks: [hermes-net]
 
 volumes:
