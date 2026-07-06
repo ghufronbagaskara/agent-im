@@ -12,12 +12,6 @@ export const MCP_SERVERS = [
     sensitive: true,
   },
   {
-    name: "memory",
-    transport: "http",
-    url: process.env.MCP_MEMORY_URL,
-    sensitive: true,
-  },
-  {
     name: "firecrawl",
     transport: "stdio",
     command: "npx",
