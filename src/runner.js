@@ -1,6 +1,6 @@
 import { AGENTS_BY_ID } from "./agents.js";
 import { generateReply } from "./llm.js";
-import { callTool, hasMcpServer } from "./mcp.js";
+import { ingestKnowledge, queryKnowledge } from "./tools/knowledge.js";
 
 export async function sendChunked(channel, text) {
   for (let i = 0; i < text.length; i += 1900) {
@@ -35,38 +35,26 @@ async function resolveAgentSystem(agent, context) {
   return agent.system;
 }
 
-async function loadMemoryContext(agentId) {
-  if (!hasMcpServer("memory") || !process.env.MCP_TOOL_MEMORY_SEARCH) {
-    return "";
-  }
-
+async function loadMemoryContext(db, queryText) {
   try {
-    return await callTool("memory", process.env.MCP_TOOL_MEMORY_SEARCH, {
-      query: agentId,
-      limit: 5,
-    });
+    const hits = await queryKnowledge(db, queryText, 5);
+    if (!hits.length) return "";
+    return hits.map((hit) => `[${hit.source}] ${hit.chunk}`).join("\n---\n");
   } catch (error) {
-    console.error(`[mcp:memory:search:${agentId}]`, error.message);
+    console.error("[memory:search]", error.message);
     return "";
   }
 }
 
-async function saveMemory(agentId, reply) {
-  if (!hasMcpServer("memory") || !process.env.MCP_TOOL_MEMORY_ADD) {
-    return;
-  }
-
+async function saveMemory(db, agentId, reply) {
   try {
-    await callTool("memory", process.env.MCP_TOOL_MEMORY_ADD, {
-      data: reply,
-      metadata: { agent: agentId },
-    });
+    await ingestKnowledge(db, `agent:${agentId}`, reply);
   } catch (error) {
-    console.error(`[mcp:memory:add:${agentId}]`, error.message);
+    console.error(`[memory:add:${agentId}]`, error.message);
   }
 }
 
-export async function runAgent(client, db, agentId) {
+export async function runAgent(client, db, agentId, { queue } = {}) {
   const agent = AGENTS_BY_ID[agentId];
   if (!agent || !agent.enabled) return;
 
@@ -84,7 +72,7 @@ export async function runAgent(client, db, agentId) {
 
   const userPrompt = await agent.task({ db });
   const system = await resolveAgentSystem(agent, { db, channelId, mode: "run" });
-  const memory = await loadMemoryContext(agent.id);
+  const memory = await loadMemoryContext(db, userPrompt);
   const content = memory
     ? `CONTEXT FROM MEMORY:\n${memory}\n\nTASK:\n${userPrompt}`
     : userPrompt;
@@ -103,12 +91,20 @@ export async function runAgent(client, db, agentId) {
     })}\n${reply}`,
   );
   await saveAgent(db, agentId, channelId, "assistant", reply);
-  await saveMemory(agentId, reply);
+  await saveMemory(db, agentId, reply);
+
+  if (agent.onReply) {
+    try {
+      await agent.onReply(reply, { db, queue });
+    } catch (error) {
+      console.error(`[agent:${agentId}:onReply]`, error.message);
+    }
+  }
 }
 
 export async function runAgentReply(client, db, agent, msg) {
   const history = await loadAgentHistory(db, agent.id, msg.channelId);
-  const memory = await loadMemoryContext(agent.id);
+  const memory = await loadMemoryContext(db, msg.content);
   const messages = [
     ...history,
     {
@@ -138,5 +134,5 @@ export async function runAgentReply(client, db, agent, msg) {
   }
 
   await sendChunked(channel, reply);
-  await saveMemory(agent.id, reply);
+  await saveMemory(db, agent.id, reply);
 }
