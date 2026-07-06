@@ -1,5 +1,6 @@
 import { hubspotPipelineSummary } from "./tools/hubspot.js";
 import { getKnowledge } from "./tools/knowledge.js";
+import { callTool, hasMcpServer } from "./mcp.js";
 import { googleNews } from "./tools/news.js";
 
 const MARKET_QUERY =
@@ -38,6 +39,22 @@ async function headlineBlock(query, limit = 5) {
   return news.map((item) => `- ${item.title}`).join("\n");
 }
 
+async function firecrawlScrape(url) {
+  if (!hasMcpServer("firecrawl") || !process.env.MCP_TOOL_FIRECRAWL_SCRAPE) {
+    return "";
+  }
+
+  try {
+    return await callTool("firecrawl", process.env.MCP_TOOL_FIRECRAWL_SCRAPE, {
+      url,
+      formats: ["markdown"],
+    });
+  } catch (error) {
+    console.error("[mcp:firecrawl]", error.message);
+    return "";
+  }
+}
+
 export const AGENTS = [
   {
     id: "heartbeat",
@@ -59,6 +76,13 @@ export const AGENTS = [
     system:
       "You are Isaac's Tender & Grant Scout. Report-first, no emojis. Surface grants, tenders, and public-sector programs relevant to MAXY's AI training and digital transformation work.",
     task: async () => {
+      const scraped = process.env.TENDER_SOURCE_URL
+        ? await firecrawlScrape(process.env.TENDER_SOURCE_URL)
+        : "";
+      if (scraped) {
+        return `New tender listings (raw):\n${scraped}\n\nExtract tenders relevant to MAXY (AI/digital training, edtech). List title, agency, deadline, value.`;
+      }
+
       const headlines = await headlineBlock(TENDER_QUERY, 8);
       return headlines
         ? `Signals for ${todayIso()}:\n${headlines}\n\nWrite today's tender and grant scout brief.`
