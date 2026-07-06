@@ -9,6 +9,7 @@ export const MCP_SERVERS = [
     name: "hubspot",
     transport: "http",
     url: process.env.MCP_HUBSPOT_URL,
+    requiredEnv: ["HUBSPOT_TOKEN"],
     sensitive: true,
   },
   {
