@@ -1,5 +1,6 @@
 import { AGENTS_BY_ID } from "./agents.js";
 import { generateReply } from "./llm.js";
+import { callTool, hasMcpServer } from "./mcp.js";
 
 export async function sendChunked(channel, text) {
   for (let i = 0; i < text.length; i += 1900) {
@@ -34,6 +35,37 @@ async function resolveAgentSystem(agent, context) {
   return agent.system;
 }
 
+async function loadMemoryContext(agentId) {
+  if (!hasMcpServer("memory") || !process.env.MCP_TOOL_MEMORY_SEARCH) {
+    return "";
+  }
+
+  try {
+    return await callTool("memory", process.env.MCP_TOOL_MEMORY_SEARCH, {
+      query: agentId,
+      limit: 5,
+    });
+  } catch (error) {
+    console.error(`[mcp:memory:search:${agentId}]`, error.message);
+    return "";
+  }
+}
+
+async function saveMemory(agentId, reply) {
+  if (!hasMcpServer("memory") || !process.env.MCP_TOOL_MEMORY_ADD) {
+    return;
+  }
+
+  try {
+    await callTool("memory", process.env.MCP_TOOL_MEMORY_ADD, {
+      data: reply,
+      metadata: { agent: agentId },
+    });
+  } catch (error) {
+    console.error(`[mcp:memory:add:${agentId}]`, error.message);
+  }
+}
+
 export async function runAgent(client, db, agentId) {
   const agent = AGENTS_BY_ID[agentId];
   if (!agent || !agent.enabled) return;
@@ -52,8 +84,12 @@ export async function runAgent(client, db, agentId) {
 
   const userPrompt = await agent.task({ db });
   const system = await resolveAgentSystem(agent, { db, channelId, mode: "run" });
+  const memory = await loadMemoryContext(agent.id);
+  const content = memory
+    ? `CONTEXT FROM MEMORY:\n${memory}\n\nTASK:\n${userPrompt}`
+    : userPrompt;
   const { provider, reply } = await generateReply(
-    [{ role: "user", content: userPrompt }],
+    [{ role: "user", content }],
     { system, policy: agent.policy },
   );
 
@@ -67,11 +103,21 @@ export async function runAgent(client, db, agentId) {
     })}\n${reply}`,
   );
   await saveAgent(db, agentId, channelId, "assistant", reply);
+  await saveMemory(agentId, reply);
 }
 
 export async function runAgentReply(client, db, agent, msg) {
   const history = await loadAgentHistory(db, agent.id, msg.channelId);
-  const messages = [...history, { role: "user", content: msg.content }];
+  const memory = await loadMemoryContext(agent.id);
+  const messages = [
+    ...history,
+    {
+      role: "user",
+      content: memory
+        ? `CONTEXT FROM MEMORY:\n${memory}\n\nUSER MESSAGE:\n${msg.content}`
+        : msg.content,
+    },
+  ];
   const system = await resolveAgentSystem(agent, {
     db,
     channelId: msg.channelId,
@@ -92,4 +138,5 @@ export async function runAgentReply(client, db, agent, msg) {
   }
 
   await sendChunked(channel, reply);
+  await saveMemory(agent.id, reply);
 }
