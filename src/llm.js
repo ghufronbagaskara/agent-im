@@ -34,6 +34,10 @@ const SENSITIVE_ORDER = parseProviderOrder(
   process.env.SENSITIVE_PROVIDER_ORDER || "anthropic",
   ["anthropic"],
 ).filter((provider) => provider === "anthropic");
+const CHEAP_ORDER = parseProviderOrder(
+  process.env.CHEAP_PROVIDER_ORDER || "gemini,groq,anthropic",
+  ["gemini", "groq", "anthropic"],
+);
 
 function parseJson(text) {
   if (!text) return {};
@@ -172,7 +176,12 @@ export async function generateReply(
   messages,
   { system = DEFAULT_SYSTEM, policy = "standard" } = {},
 ) {
-  const order = policy === "sensitive" ? SENSITIVE_ORDER : STANDARD_ORDER;
+  const order =
+    policy === "sensitive"
+      ? SENSITIVE_ORDER
+      : policy === "cheap"
+        ? CHEAP_ORDER
+        : STANDARD_ORDER;
   const failures = [];
   for (const provider of order) {
     const fn = PROVIDERS[provider];
