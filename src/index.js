@@ -4,8 +4,10 @@ import pg from "pg";
 import { AGENTS_BY_ID, buildChannelMap } from "./agents.js";
 import { generateReply } from "./llm.js";
 import { handleNotesButton, handleNotesCommand } from "./meetingNotes.js";
+import { initOps, reportError } from "./ops.js";
 import { runAgentReply } from "./runner.js";
 import { startScheduler } from "./scheduler.js";
+import { startWebhook } from "./webhook.js";
 
 const db = new pg.Pool({
   host: process.env.PGHOST,
@@ -26,6 +28,48 @@ const client = new Client({
 
 let channelMap = {};
 let agentQueue = null;
+
+async function loadAttachmentText(msg) {
+  const attachment = msg.attachments.first();
+  if (!attachment || !/\.txt$/i.test(attachment.name || "")) return "";
+  return await (await fetch(attachment.url)).text();
+}
+
+async function handleVoiceCommand(msg) {
+  let samples = msg.content.slice("!voice".length).trim();
+  if (!samples) {
+    samples = await loadAttachmentText(msg);
+  }
+
+  if (samples.length < 200) {
+    await msg.reply(
+      "Paste 15-30 of your posts after !voice, or attach a .txt.",
+    );
+    return;
+  }
+
+  const { reply: voiceMd } = await generateReply(
+    [
+      {
+        role: "user",
+        content:
+          "These are Isaac Munandar's real posts. Produce a voice.md capturing: tone, sentence rhythm, vocabulary, hooks he uses, structures, and things he never does (no bragging, humble). Be specific and usable as a style guide.\n\n" +
+          samples,
+      },
+    ],
+    {
+      system: "You are a writing-voice analyst. Output only the voice.md content.",
+      policy: "sensitive",
+    },
+  );
+
+  await db.query(
+    `INSERT INTO org_knowledge (key, value) VALUES ('voice', $1)
+     ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=now()`,
+    [voiceMd],
+  );
+  await msg.reply("voice.md updated. Content agents will now write in your voice.");
+}
 
 async function loadHistory(channelId, limit = 20) {
   const { rows } = await db.query(
@@ -53,8 +97,18 @@ client.on("messageCreate", async (msg) => {
     try {
       await handleNotesCommand(msg, db);
     } catch (err) {
-      console.error(err);
+      await reportError("command:notes", err);
       await msg.reply("Notes error — check logs.");
+    }
+    return;
+  }
+
+  if (msg.content.trim().toLowerCase().startsWith("!voice")) {
+    try {
+      await handleVoiceCommand(msg);
+    } catch (err) {
+      await reportError("command:voice", err);
+      await msg.reply("Voice training error — check logs.");
     }
     return;
   }
@@ -67,6 +121,11 @@ client.on("messageCreate", async (msg) => {
     }
 
     if (AGENTS_BY_ID[id]) {
+      if (!process.env[AGENTS_BY_ID[id].channelEnv]) {
+        await msg.reply(`Agent channel is not configured for: ${id}`);
+        return;
+      }
+
       await agentQueue.add("run", { agentId: id });
       await msg.react("✅");
     } else {
@@ -81,7 +140,7 @@ client.on("messageCreate", async (msg) => {
       await msg.channel.sendTyping();
       await runAgentReply(client, db, agent, msg);
     } catch (err) {
-      console.error(err);
+      await reportError(`agent:${agent.id}:reply`, err);
       await msg.reply("Agent error — check logs.");
     }
     return;
@@ -104,7 +163,7 @@ client.on("messageCreate", async (msg) => {
       await msg.reply(reply.slice(i, i + 1900));
     }
   } catch (err) {
-    console.error(err);
+    await reportError("chat:generic", err);
     await msg.reply("Error talking to the AI provider — check logs.");
   }
 });
@@ -116,13 +175,24 @@ client.on("interactionCreate", async (interaction) => {
   try {
     await handleNotesButton(interaction, db);
   } catch (err) {
-    console.error(err);
+    await reportError("interaction:notes", err);
   }
 });
 
 client.once("clientReady", () => {
   console.log("Hermes bot online");
+  initOps(client);
   channelMap = buildChannelMap();
   agentQueue = startScheduler(client, db);
+  startWebhook(client, db);
 });
+
+process.on("unhandledRejection", (error) => {
+  void reportError("unhandledRejection", error);
+});
+
+process.on("uncaughtException", (error) => {
+  void reportError("uncaughtException", error);
+});
+
 client.login(process.env.DISCORD_TOKEN);
