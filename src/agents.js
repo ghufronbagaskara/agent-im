@@ -9,6 +9,8 @@ const COMPETITOR_QUERY =
   "Ruangguru OR RevoU OR Dicoding OR HarukaEdu OR edtech Indonesia";
 const TENDER_QUERY =
   "grant Indonesia digital transformation OR tender pelatihan digital OR AI grant Indonesia";
+// No Twitter/Reddit API is wired yet — Google News is a proxy for "mentions".
+const SOCIAL_QUERY = '"MAXY AI" OR "Isaac Munandar"';
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -387,6 +389,77 @@ export const AGENTS = [
     task: async ({ db }) => {
       const voice = await loadVoiceGuide(db);
       return `VOICE GUIDE:\n${voice}\n\nProduce today's outreach writing brief for MAXY. Since no live lead feed is wired yet, output 3 founder-led outreach templates with [LEAD PENDING] placeholders and notes on when to use each one.`;
+    },
+    enabled: true,
+  },
+  {
+    id: "social-monitor",
+    name: "Social Media Monitor",
+    channelEnv: "CHANNEL_SOCIAL_MONITOR",
+    schedule: "10 7 * * *",
+    policy: "cheap",
+    system:
+      "You are Isaac's Social Media Monitor. Report-first, no emojis. Flag mentions of MAXY AI or Isaac Munandar, call out sentiment (positive/neutral/negative), and flag anything that needs a reply.",
+    task: async () => {
+      const headlines = await headlineBlock(SOCIAL_QUERY, 8);
+      return headlines
+        ? `Mentions for ${todayIso()}:\n${headlines}\n\nAssess sentiment per item and flag anything needing a response.`
+        : `No mentions found for ${todayIso()}. Note: only web/news mentions are covered — no Twitter/Reddit API is wired yet. Produce the brief noting the gap.`;
+    },
+    enabled: true,
+  },
+  {
+    id: "orchestrator",
+    name: "Agent Orchestrator",
+    channelEnv: "CHANNEL_ORCHESTRATOR",
+    schedule: "30 6 * * *",
+    policy: "cheap",
+    system:
+      "You are Isaac's Agent Orchestrator. Review today's Hermes agent reports and decide whether any agent should be re-run right now because something urgent surfaced (e.g. a stale big deal in Pipeline Health should trigger Signal & Nurture; a competitor threat in Competitor Study should trigger Content Strategist). Reply with ONLY a JSON array of agent ids to re-run, e.g. [\"nurture\"], or [] if none apply. No prose, no explanation, just the array.",
+    task: async ({ db }) => {
+      const { rows } = await db.query(
+        `SELECT agent_id, content FROM conversations
+         WHERE role='assistant' AND agent_id <> 'orchestrator'
+           AND created_at > now() - interval '1 day'
+         ORDER BY created_at DESC LIMIT 40`,
+      );
+      const digest = rows
+        .map((row) => `[${row.agent_id}] ${row.content.slice(0, 300)}`)
+        .join("\n---\n");
+      const ids = AGENTS.filter((agent) => agent.id !== "orchestrator")
+        .map((agent) => agent.id)
+        .join(", ");
+
+      return digest
+        ? `Today's agent reports:\n${digest}\n\nAvailable agent ids: ${ids}\n\nWhich should run again right now?`
+        : `No agent reports yet today. Available agent ids: ${ids}. Reply [].`;
+    },
+    // Delegation: parse the JSON array and enqueue those agents immediately.
+    onReply: async (reply, { queue }) => {
+      if (!queue) return;
+
+      const match = reply.match(/\[[^\]]*\]/);
+      if (!match) return;
+
+      let ids;
+      try {
+        ids = JSON.parse(match[0]);
+      } catch {
+        return;
+      }
+      if (!Array.isArray(ids)) return;
+
+      for (const id of ids) {
+        const target = AGENTS_BY_ID[id];
+        if (!target || id === "orchestrator" || !target.enabled) continue;
+        if (!process.env[target.channelEnv]) continue;
+
+        await queue.add(
+          "run",
+          { agentId: id },
+          { jobId: `delegate:${id}:${Date.now()}` },
+        );
+      }
     },
     enabled: true,
   },
