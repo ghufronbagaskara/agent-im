@@ -1,6 +1,7 @@
 import { Queue, Worker } from "bullmq";
 
 import { AGENTS } from "./agents.js";
+import { reportError } from "./ops.js";
 import { runAgent } from "./runner.js";
 
 const connection = {
@@ -20,12 +21,16 @@ export function startScheduler(client, db) {
   );
 
   worker.on("failed", (job, err) => {
-    console.error(`[scheduler] ${job?.data?.agentId} failed:`, err.message);
+    void reportError(
+      `scheduler:${job?.data?.agentId || "unknown"}`,
+      err,
+    );
   });
 
   (async () => {
     for (const agent of AGENTS) {
       if (!agent.enabled || !agent.schedule) continue;
+      if (!process.env[agent.channelEnv]) continue;
 
       await queue.add(
         "run",
@@ -44,7 +49,7 @@ export function startScheduler(client, db) {
 
     console.log("[scheduler] repeatable jobs registered");
   })().catch((error) => {
-    console.error("[scheduler] failed to register repeatable jobs:", error);
+    void reportError("scheduler:register", error);
   });
 
   return queue;
