@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS conversations (
   id           BIGSERIAL PRIMARY KEY,
+  agent_id     TEXT NOT NULL DEFAULT 'default',
   channel_id   TEXT NOT NULL,
   role         TEXT NOT NULL,          -- 'user' or 'assistant'
   content      TEXT NOT NULL,
@@ -18,5 +19,7 @@ CREATE TABLE IF NOT EXISTS meeting_notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_conv_channel ON conversations(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_conv_agent
+  ON conversations(agent_id, channel_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notes_channel_created
   ON meeting_notes(channel_id, created_at);
