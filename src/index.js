@@ -8,6 +8,7 @@ import { handleNotesButton, handleNotesCommand } from "./meetingNotes.js";
 import { initOps, reportError } from "./ops.js";
 import { runAgentReply } from "./runner.js";
 import { startScheduler } from "./scheduler.js";
+import { ingestKnowledge, queryKnowledge } from "./tools/knowledge.js";
 import { startWebhook } from "./webhook.js";
 
 const db = new pg.Pool({
@@ -72,6 +73,37 @@ async function handleVoiceCommand(msg) {
   await msg.reply("voice.md updated. Content agents will now write in your voice.");
 }
 
+async function handleLearnCommand(msg) {
+  let text = msg.content.slice("!learn".length).trim();
+  if (!text) {
+    text = await loadAttachmentText(msg);
+  }
+
+  let label = "note";
+  const labelMatch = text.match(/^([\w-]{1,40}):\s*/);
+  if (labelMatch) {
+    label = labelMatch[1];
+    text = text.slice(labelMatch[0].length);
+  }
+
+  if (text.length < 50) {
+    await msg.reply(
+      "Paste text after !learn (optionally `label: text`), or attach a .txt. Needs at least 50 chars.",
+    );
+    return;
+  }
+
+  const stored = await ingestKnowledge(db, `manual:${label}`, text);
+  if (!stored) {
+    await msg.reply("Could not embed that text — check GEMINI_API_KEY.");
+    return;
+  }
+
+  await msg.reply(
+    `Learned. Stored ${stored} chunk(s) under source "manual:${label}". Agents will pull this in when relevant.`,
+  );
+}
+
 async function loadHistory(channelId, limit = 20) {
   const { rows } = await db.query(
     `SELECT role, content FROM conversations
@@ -110,6 +142,16 @@ client.on("messageCreate", async (msg) => {
     } catch (err) {
       await reportError("command:voice", err);
       await msg.reply("Voice training error — check logs.");
+    }
+    return;
+  }
+
+  if (msg.content.trim().toLowerCase().startsWith("!learn")) {
+    try {
+      await handleLearnCommand(msg);
+    } catch (err) {
+      await reportError("command:learn", err);
+      await msg.reply("Learn error — check logs.");
     }
     return;
   }
@@ -168,7 +210,11 @@ client.on("messageCreate", async (msg) => {
   try {
     await msg.channel.sendTyping();
     const history = await loadHistory(msg.channelId);
-    const messages = [...history, { role: "user", content: msg.content }];
+    const knowledgeHits = await queryKnowledge(db, msg.content, 4);
+    const userContent = knowledgeHits.length
+      ? `KNOWLEDGE BASE CONTEXT:\n${knowledgeHits.map((hit) => `[${hit.source}] ${hit.chunk}`).join("\n---\n")}\n\nMESSAGE:\n${msg.content}`
+      : msg.content;
+    const messages = [...history, { role: "user", content: userContent }];
     const { provider, reply } = await generateReply(messages, {
       policy: "standard",
     });
