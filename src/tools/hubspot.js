@@ -1,6 +1,18 @@
+import { callTool, hasMcpServer } from "../mcp.js";
+
 const STALE_DAYS = 3;
 
 export async function hubspotPipelineSummary() {
+  if (hasMcpServer("hubspot") && process.env.MCP_TOOL_HUBSPOT_LIST_DEALS) {
+    try {
+      return await callTool("hubspot", process.env.MCP_TOOL_HUBSPOT_LIST_DEALS, {
+        limit: 100,
+      });
+    } catch (error) {
+      console.error("[tool:hubspot:mcp]", error.message);
+    }
+  }
+
   const token = process.env.HUBSPOT_TOKEN;
   if (!token) return null;
 
