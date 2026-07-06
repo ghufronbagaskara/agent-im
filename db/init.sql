@@ -5,4 +5,18 @@ CREATE TABLE IF NOT EXISTS conversations (
   content      TEXT NOT NULL,
   created_at   TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS meeting_notes (
+  id            BIGSERIAL PRIMARY KEY,
+  channel_id    TEXT NOT NULL,
+  meeting_date  TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+  summary_md    TEXT NOT NULL,
+  created_by    TEXT,
+  created_at    TIMESTAMPTZ DEFAULT now(),
+  approved_at   TIMESTAMPTZ
+);
+
 CREATE INDEX IF NOT EXISTS idx_conv_channel ON conversations(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_notes_channel_created
+  ON meeting_notes(channel_id, created_at);
