@@ -26,6 +26,14 @@ async function saveAgent(db, agentId, channelId, role, content) {
   );
 }
 
+async function resolveAgentSystem(agent, context) {
+  if (typeof agent.system === "function") {
+    return await agent.system(context);
+  }
+
+  return agent.system;
+}
+
 export async function runAgent(client, db, agentId) {
   const agent = AGENTS_BY_ID[agentId];
   if (!agent || !agent.enabled) return;
@@ -43,9 +51,10 @@ export async function runAgent(client, db, agentId) {
   }
 
   const userPrompt = await agent.task({ db });
+  const system = await resolveAgentSystem(agent, { db, channelId, mode: "run" });
   const { provider, reply } = await generateReply(
     [{ role: "user", content: userPrompt }],
-    { system: agent.system, policy: agent.policy },
+    { system, policy: agent.policy },
   );
 
   console.log(`[agent:${agentId}] report via ${provider}`);
@@ -63,8 +72,14 @@ export async function runAgent(client, db, agentId) {
 export async function runAgentReply(client, db, agent, msg) {
   const history = await loadAgentHistory(db, agent.id, msg.channelId);
   const messages = [...history, { role: "user", content: msg.content }];
+  const system = await resolveAgentSystem(agent, {
+    db,
+    channelId: msg.channelId,
+    msg,
+    mode: "reply",
+  });
   const { reply } = await generateReply(messages, {
-    system: agent.system,
+    system,
     policy: agent.policy,
   });
 
