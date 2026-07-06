@@ -30,17 +30,21 @@ services:
     image: ghcr.io/taylorwilsdon/google_workspace_mcp:latest
     restart: unless-stopped
     env_file: .env
-    command: ["--transport", "streamable-http", "--port", "8000"]
+    environment:
+      MCP_ENABLE_OAUTH21: "true"
+      WORKSPACE_MCP_PORT: "8000"
+      WORKSPACE_MCP_STATELESS_MODE: "true"
+      TOOL_TIER: core
     networks: [hermes-net]
 
-  hubspot-mcp:
-    profiles: ["mcp"]
-    image: node:20-alpine
-    restart: unless-stopped
-    command: sh -c "npx -y @hubspot/mcp-server --http --port 8001"
-    environment:
-      PRIVATE_APP_ACCESS_TOKEN: ${HUBSPOT_TOKEN}
-    networks: [hermes-net]
+  # hubspot-mcp:
+  #   profiles: ["mcp"]
+  #   image: node:20-alpine
+  #   restart: unless-stopped
+  #   command: sh -c "npx -y @hubspot/mcp-server --http --port 8001"
+  #   environment:
+  #     PRIVATE_APP_ACCESS_TOKEN: ${HUBSPOT_TOKEN}
+  #   networks: [hermes-net]
 
 volumes:
   hermes_pgdata:
