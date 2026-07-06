@@ -34,9 +34,10 @@ const SENSITIVE_ORDER = parseProviderOrder(
   process.env.SENSITIVE_PROVIDER_ORDER || "anthropic",
   ["anthropic"],
 ).filter((provider) => provider === "anthropic");
+// Cheap work stays on free providers only — never spills to paid Anthropic.
 const CHEAP_ORDER = parseProviderOrder(
-  process.env.CHEAP_PROVIDER_ORDER || "gemini,groq,anthropic",
-  ["gemini", "groq", "anthropic"],
+  process.env.CHEAP_PROVIDER_ORDER || "gemini,groq",
+  ["gemini", "groq"],
 );
 
 function parseJson(text) {
