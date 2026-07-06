@@ -20,6 +20,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    ports:
+      - "3010:3010"
     depends_on: [hermes-postgres, hermes-redis]
     networks: [hermes-net]
 
