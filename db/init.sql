@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS meeting_notes (
   approved_at   TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS org_knowledge (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_conv_channel ON conversations(channel_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_conv_agent
   ON conversations(agent_id, channel_id, created_at);
