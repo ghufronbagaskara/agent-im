@@ -1,10 +1,13 @@
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-} from "discord.js";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
+
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from "discord.js";
 
 import { generateReply } from "./llm.js";
+import { reportError } from "./ops.js";
+import { addActionItems } from "./tools/calendar.js";
+import { meetingNotesPdf } from "./tools/pdf.js";
 
 const NOTES_SYSTEM = `You summarize meeting transcripts for Isaac Munandar (CEO, MAXY AI).
 Map action items to this team first, matching by role if a name is ambiguous:
@@ -61,6 +64,61 @@ function approvalRow(noteId) {
   );
 }
 
+function extractActionItems(summaryMd) {
+  const match = summaryMd.match(
+    /### Action Items\s*([\s\S]*?)(?:\n###\s|\s*$)/i,
+  );
+  if (!match) return [];
+
+  return match[1]
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.startsWith("|") &&
+        !/\|\s*#\s*\|/i.test(line) &&
+        !/^\|\s*-+\s*\|/.test(line),
+    )
+    .map((line) => line.replace(/^\||\|$/g, ""))
+    .map((line) => line.split("|").map((cell) => cell.trim()))
+    .filter((cells) => cells.length >= 4)
+    .map((cells) => ({
+      task: cells[1],
+      pic: cells[2],
+      deadline: cells[3],
+    }));
+}
+
+export async function createMeetingNote(
+  client,
+  db,
+  { channelId, transcript, meetingDate, createdBy = "fathom" },
+) {
+  const summary = await generateMeetingSummary(transcript, meetingDate);
+  const { rows } = await db.query(
+    `INSERT INTO meeting_notes (channel_id, meeting_date, summary_md, created_by)
+     VALUES ($1,$2,$3,$4) RETURNING id`,
+    [channelId, meetingDate, summary, createdBy],
+  );
+  const noteId = rows[0].id;
+  const channel = await client.channels.fetch(channelId);
+
+  if (!channel?.isTextBased()) {
+    throw new Error(`Meeting channel ${channelId} is missing or not text-based`);
+  }
+
+  const full = `**Meeting Notes - draft (pending approval)** · id ${noteId}\n${summary}`;
+  for (let i = 0; i < full.length; i += 1900) {
+    const isLast = i + 1900 >= full.length;
+    await channel.send({
+      content: full.slice(i, i + 1900),
+      components: isLast ? [approvalRow(noteId)] : [],
+    });
+  }
+
+  return noteId;
+}
+
 export async function handleNotesCommand(msg, db) {
   const body = msg.content.slice("!notes".length).trim();
   const dateMatch = body.match(/^(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2})?)/);
@@ -83,32 +141,18 @@ export async function handleNotesCommand(msg, db) {
 
   await msg.channel.sendTyping();
 
-  let summary;
   try {
-    summary = await generateMeetingSummary(transcript, meetingDate);
+    await createMeetingNote(msg.client, db, {
+      channelId: msg.channelId,
+      transcript,
+      meetingDate,
+      createdBy: msg.author.tag,
+    });
   } catch (err) {
-    console.error(err);
+    await reportError("meetingNotes:create", err);
     await msg.reply(
       "Could not generate notes on the confidential-safe provider (Anthropic). Not falling back to a free tier for meeting data. Check the API key / limits.",
     );
-    return;
-  }
-
-  const { rows } = await db.query(
-    `INSERT INTO meeting_notes (channel_id, meeting_date, summary_md, created_by)
-     VALUES ($1,$2,$3,$4) RETURNING id`,
-    [msg.channelId, meetingDate, summary, msg.author.tag],
-  );
-  const noteId = rows[0].id;
-
-  const header = `**Meeting Notes — draft (pending approval)** · id ${noteId}\n`;
-  const full = header + summary;
-  for (let i = 0; i < full.length; i += 1900) {
-    const isLast = i + 1900 >= full.length;
-    await msg.reply({
-      content: full.slice(i, i + 1900),
-      components: isLast ? [approvalRow(noteId)] : [],
-    });
   }
 }
 
@@ -123,6 +167,8 @@ export async function handleNotesButton(interaction, db) {
     await interaction.reply({ content: "Note not found.", ephemeral: true });
     return;
   }
+
+  const note = rows[0];
 
   if (action === "reject") {
     await db.query(`UPDATE meeting_notes SET status='rejected' WHERE id=$1`, [
@@ -141,21 +187,46 @@ export async function handleNotesButton(interaction, db) {
       [noteId],
     );
 
-    let distMsg = "saved to database";
+    const distribution = ["saved to database"];
     try {
       if (process.env.NOTION_TOKEN && process.env.NOTION_NOTES_DB) {
-        await pushToNotion(rows[0]);
-        distMsg = "saved + pushed to Notion";
+        await pushToNotion(note);
+        distribution.push("pushed to Notion");
       }
     } catch (err) {
-      console.error("[notion]", err);
-      distMsg = "saved to database (Notion push failed — check logs)";
+      await reportError("meetingNotes:notion", err);
+      distribution.push("Notion push failed");
+    }
+
+    try {
+      if (await addActionItems(extractActionItems(note.summary_md))) {
+        distribution.push("added action items to Calendar");
+      }
+    } catch (err) {
+      await reportError("meetingNotes:calendar", err);
+      distribution.push("Calendar push failed");
     }
 
     await interaction.update({
-      content: `Note ${noteId} **approved** — ${distMsg}.`,
+      content: `Note ${noteId} **approved** - ${distribution.join(", ")}.`,
       components: [],
     });
+
+    const pdfPath = path.join(os.tmpdir(), `notes-${noteId}.pdf`);
+    try {
+      await meetingNotesPdf(note, pdfPath);
+      await interaction.followUp({
+        content: "Client-facing PDF (CEO notes stripped):",
+        files: [pdfPath],
+      });
+    } catch (err) {
+      await reportError("meetingNotes:pdf", err);
+      await interaction.followUp({
+        content: "PDF generation failed - check logs.",
+      });
+    } finally {
+      await fs.unlink(pdfPath).catch(() => {});
+    }
   }
 }
 
