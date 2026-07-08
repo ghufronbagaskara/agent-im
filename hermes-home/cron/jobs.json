@@ -1,0 +1,48 @@
+{
+  "jobs": [
+    {
+      "id": "7d120f79a3e7",
+      "name": "Meeting Notes",
+      "prompt": "Use the fathom skill to pull new meetings since the last processed recording id (tracked in memory). Summarize each with the maxy-context meeting-notes format. Post as a DRAFT to this channel ending with: reply approve RECORDING_ID to distribute. Do NOT push to Notion or Calendar until Isaac replies approve. If FATHOM_API_KEY is unset, stay silent.",
+      "skills": [
+        "maxy-context",
+        "fathom"
+      ],
+      "skill": "maxy-context",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "anthropic",
+      "model_snapshot": "claude-sonnet-4-5-20250929",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 27
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-07T23:41:24.253611+07:00",
+      "paused_reason": null,
+      "created_at": "2026-07-07T10:05:58.896000+07:00",
+      "next_run_at": "2026-07-08T00:00:00+07:00",
+      "last_run_at": "2026-07-07T23:31:38.823465+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "discord:1523595154412273674",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-08T11:01:47.199574+07:00"
+}
